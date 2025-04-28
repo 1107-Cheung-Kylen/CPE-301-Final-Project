@@ -1,12 +1,8 @@
-#include <LiquidCrystal.h>
-#include "DHT.h"
+#include <LiquidCrystal.h> 
+#include "dht.h" // dht.h by Rob Tillaart
 #include <Stepper.h>
 #include <Wire.h>
-#include "RTClib.h"
-
-// Clock variables
-RTC_DS1307 rtc;  // Real Time Clock object
-char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+#include "RTClib.h" // RTClib by Adafruit
 
 // Environmental threshold variables
 float tempThreshold = 78;  // Temperature threshold
@@ -17,13 +13,18 @@ const int stepsPerRevolution = 2048;  // Number of steps for a full revolution
 const int rpm = 10;  // Rotations per minute
 Stepper stepper(stepsPerRevolution, 8, 10, 9, 11);  // Initialize the stepper library on pins 8 through 11
 
-// LCD display setup
-LiquidCrystal lcd(2, 3, 4, 5, 6, 7);  // Set the LCD pins
-
 // DHT sensor setup
 #define DHTPIN 12  // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT11  // DHT 11 sensor type
-DHT dht(DHTPIN, DHTTYPE);  // Initialize DHT sensor
+// DHT dht(DHTPIN, DHTTYPE);  // Initialize DHT sensor
+dht DHT;
+
+// LCD display setup
+LiquidCrystal lcd(2, 3, 4, 5, 6, 7);  // Set the LCD pins
+
+// Clock variables
+RTC_DS1307 rtc;  // Real Time Clock object
+char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 
 // Fan control pins
 #define ENABLE A2
@@ -32,23 +33,29 @@ DHT dht(DHTPIN, DHTTYPE);  // Initialize DHT sensor
 
 // ADC (Analog-to-Digital Converter) setup
 #define RDA 0x80
-#define TBE 0x20  
-volatile unsigned char *serialControlRegA = (unsigned char *)0x00C0;
-volatile unsigned char *serialControlRegB = (unsigned char *)0x00C1;
-volatile unsigned char *serialControlRegC = (unsigned char *)0x00C2;
-volatile unsigned int  *baudRateReg  = (unsigned int *) 0x00C4;
-volatile unsigned char *dataReg   = (unsigned char *)0x00C6;
+#define TBE 0x20 
 
 volatile unsigned char *adcMux = (unsigned char*) 0x7C;
 volatile unsigned char *adcControlStatusA = (unsigned char*) 0x7A;
 volatile unsigned char *adcControlStatusB = (unsigned char *) 0x7b;
 volatile unsigned int *adcData = (unsigned int*) 0x78;
 
+volatile unsigned char *serialControlRegA = (unsigned char *)0x00C0;
+volatile unsigned char *serialControlRegB = (unsigned char *)0x00C1;
+volatile unsigned char *serialControlRegC = (unsigned char *)0x00C2;
+volatile unsigned int  *baudRateReg  = (unsigned int *) 0x00C4;
+volatile unsigned char *dataReg   = (unsigned char *)0x00C6;
+
 volatile unsigned char *timerControlRegC = (unsigned char *) 0x82;
 volatile unsigned char *timerInterruptMask1 = (unsigned char *) 0x6F;
 
 long value = 0UL;
 long maxtime = 160000000UL;
+
+// Port K registers (Analog I/O pins)
+volatile unsigned char* portKInput = (unsigned char*) 0x106;
+volatile unsigned char* portKDirection = (unsigned char*) 0x107;
+volatile unsigned char* portKData = (unsigned char*) 0x108;
 
 // Timer configuration
 volatile unsigned char* timerControlRegA = (unsigned char*) 0x80;
@@ -62,10 +69,7 @@ volatile unsigned char* portBData = (unsigned char*) 0x25; // Port B data regist
 volatile unsigned char* portBDirection = (unsigned char*) 0x24;  // Port B Data Direction Register
 volatile unsigned char* portBInput = (unsigned char*) 0x23;  // Port B Input Pin Address
 
-// Port K registers (Analog I/O pins)
-volatile unsigned char* portKInput = (unsigned char*) 0x106;
-volatile unsigned char* portKDirection = (unsigned char*) 0x107;
-volatile unsigned char* portKData = (unsigned char*) 0x108;
+int toggle = 0;
 
 // Function declarations
 void adc_init();
@@ -85,8 +89,6 @@ void ErrorState();
 void RunningState();
 void IdleState();
 void DisabledState();
-
-int toggle = 0;
 
 void setup() {
   // Initialize serial communication and RTC (Real Time Clock)
@@ -113,7 +115,7 @@ void setup() {
   lcd.begin(16, 2);
 
   // Initialize DHT sensor
-  dht.begin();
+  // dht.begin();
 
   // Initialize timers
   *timerInterruptFlagReg1 = B00000000;
@@ -233,8 +235,11 @@ void ErrorState() {
 // DHT Sensor Function
 // Reads and returns temperature from the DHT sensor, and updates the LCD.
 double DHTSensor() {
-  float humidity = dht.readHumidity();  // Read humidity
-  float temperatureF = dht.readTemperature(true);  // Read temperature in Fahrenheit
+  // float humidity = dht.readHumidity();  // Read humidity
+  int chk = DHT.read(DHTPIN);
+  float humidity = DHT.humidity;
+  float temperatureF = DHT.temperature;
+  // float temperatureF = dht.readTemperature(true);  // Read temperature in Fahrenheit
 
   // Check for failed reading from sensor
   if (isnan(humidity) || isnan(temperatureF)) {
@@ -288,19 +293,19 @@ void VentControl() {
 void ClockModule() {
   DateTime now = rtc.now();
 
-  Serial.print(now.year(), MAY);
+  Serial.print(now.year(), DEC);
   Serial.print('/');
-  Serial.print(now.month(), MAY);
+  Serial.print(now.month(), DEC);
   Serial.print('/');
-  Serial.print(now.day(), MAY);
+  Serial.print(now.day(), DEC);
   Serial.print(" (");
   Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
   Serial.print(") ");
-  Serial.print(now.hour(), MAY);
+  Serial.print(now.hour(), DEC);
   Serial.print(':');
-  Serial.print(now.minute(), MAY);
+  Serial.print(now.minute(), DEC);
   Serial.print(':');
-  Serial.print(now.second(), MAY);
+  Serial.print(now.second(), DEC);
   Serial.println();
 }
 
