@@ -14,24 +14,24 @@ const int rpm = 10;  // Rotations per minute
 Stepper stepper(stepsPerRevolution, 8, 10, 9, 11);  // Initialize the stepper library on pins 8 through 11
 
 // DHT sensor setup
-#define DHTPIN 12  // Digital pin connected to the DHT sensor
+#define DHTPIN 14  // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT11  // DHT 11 sensor type
 // DHT dht(DHTPIN, DHTTYPE);  // Initialize DHT sensor
 dht DHT;
 
 // LCD display setup
-LiquidCrystal lcd(2, 3, 4, 5, 6, 7);  // Set the LCD pins
+LiquidCrystal lcd(11, 12, 2, 3, 4, 5);  // Set the LCD pins
 
 // Clock variables
 RTC_DS1307 rtc;  // Real Time Clock object
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 
-// Fan control pins
+// Fan control pins // FIX LATER, NOT YET CODE
 #define ENABLE A2
 #define DIRA A3
 #define DIRB A4
 
-// ADC (Analog-to-Digital Converter) setup
+// ADC (Analog-to-Digital Converter) setup // NOT USED?
 #define RDA 0x80
 #define TBE 0x20 
 
@@ -109,10 +109,12 @@ void setup() {
   }
 
   // Initialize stepper motor
-  stepper.setSpeed(rpm);
+  // stepper.setSpeed(rpm);
 
   // Initialize LCD
   lcd.begin(16, 2);
+  lcd.clear();
+  lcd.print("test");
 
   // Initialize DHT sensor
   // dht.begin();
