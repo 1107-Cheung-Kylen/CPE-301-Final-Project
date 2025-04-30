@@ -1,5 +1,5 @@
 #include <LiquidCrystal.h> 
-#include "dht.h" // dht.h by Rob Tillaart
+#include "DHTStable.h" // DHTlib by Rob Tillaart
 #include <Stepper.h>
 #include <Wire.h>
 #include "RTClib.h" // RTClib by Adafruit
@@ -14,10 +14,9 @@ const int rpm = 10;  // Rotations per minute
 Stepper stepper(stepsPerRevolution, 8, 10, 9, 11);  // Initialize the stepper library on pins 8 through 11
 
 // DHT sensor setup
-#define DHTPIN 14  // Digital pin connected to the DHT sensor
-#define DHTTYPE DHT11  // DHT 11 sensor type
+#define DHT11_PIN 14  // Digital pin connected to the DHT sensor
 // DHT dht(DHTPIN, DHTTYPE);  // Initialize DHT sensor
-dht DHT;
+DHTStable DHT;
 
 // LCD display setup
 LiquidCrystal lcd(11, 12, 2, 3, 4, 5);  // Set the LCD pins
@@ -92,10 +91,12 @@ void DisabledState();
 
 void setup() {
   // Initialize serial communication and RTC (Real Time Clock)
-  Serial.begin(57600);
-  #ifndef ESP8266
-  while (!Serial); // Wait for serial port to connect. Needed for native USB
-  #endif
+  // Serial.begin(57600);
+  // #ifndef ESP8266
+  // while (!Serial); // Wait for serial port to connect. Needed for native USB
+  // #endif
+
+  Serial.begin(9600);
 
   if (!rtc.begin()) {
     Serial.println("Couldn't find RTC");
@@ -115,6 +116,11 @@ void setup() {
   lcd.begin(16, 2);
   lcd.clear();
   lcd.print("test");
+
+
+  // TESTING
+  DHTSensor();
+
 
   // Initialize DHT sensor
   // dht.begin();
@@ -157,7 +163,7 @@ void loop() {
 
   // Error state: water level below threshold
   if (*portKInput == B00000000 && (WaterSensor() < waterThreshold)) {
-    ErrorState();
+    // ErrorState(); // disabled for TESTING
   }
 }
 
@@ -238,9 +244,16 @@ void ErrorState() {
 // Reads and returns temperature from the DHT sensor, and updates the LCD.
 double DHTSensor() {
   // float humidity = dht.readHumidity();  // Read humidity
-  int chk = DHT.read(DHTPIN);
-  float humidity = DHT.humidity;
-  float temperatureF = DHT.temperature;
+  int chk = DHT.read11(DHT11_PIN);
+  float humidity = DHT.getHumidity();
+  float temperatureF = DHT.getTemperature();
+
+  //TESTING
+  Serial.println("TEMPERATURE");
+  Serial.println(DHT.getTemperature());
+  Serial.println("HUMIDITY");
+  Serial.println(DHT.getHumidity());
+
   // float temperatureF = dht.readTemperature(true);  // Read temperature in Fahrenheit
 
   // Check for failed reading from sensor
