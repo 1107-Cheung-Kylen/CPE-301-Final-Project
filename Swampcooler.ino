@@ -1,5 +1,5 @@
 #include <LiquidCrystal.h> 
-#include "DHTStable.h" // DHTlib by Rob Tillaart
+#include "DHT.h" // DHT Sensor Library by Adafruit
 #include <Stepper.h>
 #include <Wire.h>
 #include "RTClib.h" // RTClib by Adafruit
@@ -11,12 +11,12 @@ float waterThreshold = 500; // Water level threshold
 // Stepper motor configuration
 const int stepsPerRevolution = 2048;  // Number of steps for a full revolution
 const int rpm = 10;  // Rotations per minute
-Stepper stepper(stepsPerRevolution, 8, 10, 9, 11);  // Initialize the stepper library on pins 8 through 11
+Stepper stepper(stepsPerRevolution, 15, 17, 16, 18);  // Initialize the stepper library on pins 8 through 11
 
 // DHT sensor setup
-#define DHT11_PIN 14  // Digital pin connected to the DHT sensor
-// DHT dht(DHTPIN, DHTTYPE);  // Initialize DHT sensor
-DHTStable DHT;
+#define DHTPIN 14  // Digital pin connected to the DHT sensor
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);  // Initialize DHT sensor
 
 // LCD display setup
 LiquidCrystal lcd(11, 12, 2, 3, 4, 5);  // Set the LCD pins
@@ -25,15 +25,16 @@ LiquidCrystal lcd(11, 12, 2, 3, 4, 5);  // Set the LCD pins
 RTC_DS1307 rtc;  // Real Time Clock object
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 
-// Fan control pins // FIX LATER, NOT YET CODE
-#define ENABLE A2
-#define DIRA A3
-#define DIRB A4
+// Fan control pins
+#define ENABLE 22
+#define DIRA 23
+#define DIRB 25
 
 // ADC (Analog-to-Digital Converter) setup // NOT USED?
 #define RDA 0x80
 #define TBE 0x20 
 
+// Water sensor
 volatile unsigned char *adcMux = (unsigned char*) 0x7C;
 volatile unsigned char *adcControlStatusA = (unsigned char*) 0x7A;
 volatile unsigned char *adcControlStatusB = (unsigned char *) 0x7b;
@@ -119,11 +120,7 @@ void setup() {
 
 
   // TESTING
-  DHTSensor();
-
-
-  // Initialize DHT sensor
-  // dht.begin();
+  dht.begin();
 
   // Initialize timers
   *timerInterruptFlagReg1 = B00000000;
@@ -145,6 +142,9 @@ void setup() {
 void loop() {
   // Main program loop
   // Check and handle system states based on sensor inputs and toggle switch
+
+  //TESTING
+  VentControl();
 
   // Disabled state: system off
   if (*portKInput == B00000001) {
@@ -244,17 +244,14 @@ void ErrorState() {
 // Reads and returns temperature from the DHT sensor, and updates the LCD.
 double DHTSensor() {
   // float humidity = dht.readHumidity();  // Read humidity
-  int chk = DHT.read11(DHT11_PIN);
-  float humidity = DHT.getHumidity();
-  float temperatureF = DHT.getTemperature();
+  float humidity = dht.readHumidity();
+  float temperatureF = dht.readTemperature(true);
 
   //TESTING
   Serial.println("TEMPERATURE");
-  Serial.println(DHT.getTemperature());
+  Serial.println(temperatureF);
   Serial.println("HUMIDITY");
-  Serial.println(DHT.getHumidity());
-
-  // float temperatureF = dht.readTemperature(true);  // Read temperature in Fahrenheit
+  Serial.println(humidity);
 
   // Check for failed reading from sensor
   if (isnan(humidity) || isnan(temperatureF)) {
@@ -290,17 +287,21 @@ void LCDError() {
 // Ventilation Control Function
 // Controls the stepper motor for ventilation based on sensor inputs.
 void VentControl() {
-  int steps = stepsPerRevolution / 360;  // Calculate steps for partial revolution
+  // int steps = stepsPerRevolution / 360;  // Calculate steps for partial revolution
 
-  while (*portKInput == B00000010) {  // Analog pin 9
-    stepper.step(steps);  // Rotate stepper motor
-    Serial.println("Rotating Left");
-  }
+  // while (*portKInput == B00000010) {  // Analog pin 9
+  //   stepper.step(steps);  // Rotate stepper motor
+  //   Serial.println("Rotating Left");
+  // }
 
-  while (*portKInput == B00000100) {  // Analog pin 10
-    stepper.step(-steps);  // Rotate stepper motor in opposite direction
-    Serial.println("Rotating Right");
-  }
+  // while (*portKInput == B00000100) {  // Analog pin 10
+  //   stepper.step(-steps);  // Rotate stepper motor in opposite direction
+  //   Serial.println("Rotating Right");
+  // }
+
+  stepper.setSpeed(5);
+  stepper.step(stepsPerRevolution);
+  delay(1000);
 }
 
 // Clock Module Function
