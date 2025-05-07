@@ -15,7 +15,7 @@ Stepper stepper(stepsPerRevolution, 15, 17, 16, 18);  // Initialize the stepper 
 
 // DHT sensor setup
 #define DHTPIN 14  // Digital pin connected to the DHT sensor
-#define DHTTYPE DHT11
+#define DHTTYPE DHT11 // Set DHT sensor type
 DHT dht(DHTPIN, DHTTYPE);  // Initialize DHT sensor
 
 // LCD display setup
@@ -35,34 +35,36 @@ char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursd
 #define TBE 0x20 
 
 // Water sensor
-volatile unsigned char *adcMux = (unsigned char*) 0x7C;
-volatile unsigned char *adcControlStatusA = (unsigned char*) 0x7A;
-volatile unsigned char *adcControlStatusB = (unsigned char *) 0x7b;
-volatile unsigned int *adcData = (unsigned int*) 0x78;
+volatile unsigned char *myUCSR0A = (unsigned char *)0x00C0; //serialControlRegA
+volatile unsigned char *myUCSR0B = (unsigned char *)0x00C1; //serialControlRegB
+volatile unsigned char *myUCSR0C = (unsigned char *)0x00C2; //serialControlRegC
+volatile unsigned int  *myUBRR0  = (unsigned int *) 0x00C4; //baudRateReg
+volatile unsigned char *myUDR0   = (unsigned char *)0x00C6; //dataReg
+ 
+volatile unsigned char* my_ADMUX = (unsigned char*) 0x7C;
+volatile unsigned char* my_ADCSRA = (unsigned char*) 0x7A; //adcControlStatusA
+volatile unsigned char* my_ADCSRB = (unsigned char*) 0x7B; //adcControlStatusB
+volatile unsigned int* my_ADC_DATA = (unsigned int*) 0x78; //adcData
 
-volatile unsigned char *serialControlRegA = (unsigned char *)0x00C0;
-volatile unsigned char *serialControlRegB = (unsigned char *)0x00C1;
-volatile unsigned char *serialControlRegC = (unsigned char *)0x00C2;
-volatile unsigned int  *baudRateReg  = (unsigned int *) 0x00C4;
-volatile unsigned char *dataReg   = (unsigned char *)0x00C6;
+// Timer code?
+// volatile unsigned char *timerControlRegC = (unsigned char *) 0x82;
+// volatile unsigned char *timerInterruptMask1 = (unsigned char *) 0x6F;
 
-volatile unsigned char *timerControlRegC = (unsigned char *) 0x82;
-volatile unsigned char *timerInterruptMask1 = (unsigned char *) 0x6F;
-
-long value = 0UL;
-long maxtime = 160000000UL;
+// long value = 0UL;
+// long maxtime = 160000000UL;
 
 // Port K registers (Analog I/O pins)
 volatile unsigned char* portKInput = (unsigned char*) 0x106;
 volatile unsigned char* portKDirection = (unsigned char*) 0x107;
 volatile unsigned char* portKData = (unsigned char*) 0x108;
 
-// Timer configuration
-volatile unsigned char* timerControlRegA = (unsigned char*) 0x80;
-volatile unsigned char* timerControlRegB = (unsigned char*) 0x81;
-volatile unsigned int* timerCounter1 = (unsigned int*) 0x84;
-volatile unsigned char* timerInterruptFlagReg1 = (unsigned char*) 0x36;
-int oneSecondTicks = 62500;  // Ticks value for 1 second delay with timer
+// Timer configuration (used in MyDelay function)
+volatile unsigned char* timerControlRegA = (unsigned char*) 0x80; // TCCR1A
+volatile unsigned char* timerControlRegB = (unsigned char*) 0x81; // TCCR1B
+volatile unsigned int* timerCounter1 = (unsigned int*) 0x84; // TCNT1
+volatile unsigned char* timerInterruptFlagReg1 = (unsigned char*) 0x36; // TIFR1
+// int oneSecondTicks = 62500;  // Ticks value for 1 second delay with timer
+// int freq = 0;
 
 // Port B registers (Digital I/O pins)
 volatile unsigned char* portBData = (unsigned char*) 0x25; // Port B data register
@@ -72,13 +74,13 @@ volatile unsigned char* portBInput = (unsigned char*) 0x23;  // Port B Input Pin
 int toggle = 0;
 
 // Function declarations
-void adc_init();
-unsigned int adc_read(unsigned char adc_channel);
-void MyDelay(unsigned int ticks);
-void U0putchar(int U0pdata);
-void U0init(unsigned long U0baud);
+void adc_init(); // used for water sensor
+unsigned int adc_read(unsigned char adc_channel); // used for water sensor
+void MyDelay(unsigned int freq); // replaces regular delay function
+void TimerDelay(unsigned int ticks); // UNKNOWN?
+void U0putchar(unsigned char U0pdata); // replaces serial, only one char at a time
+// void U0init(unsigned long U0baud);
 int WaterSensor();
-void TimerDelay(unsigned int ticks); 
 void ClockModule(); 
 void FanControl();
 void VentControl();
@@ -90,36 +92,26 @@ void RunningState();
 void IdleState();
 void DisabledState();
 
-void setup() {
-  // Initialize serial communication and RTC (Real Time Clock)
-  // Serial.begin(57600);
-  // #ifndef ESP8266
-  // while (!Serial); // Wait for serial port to connect. Needed for native USB
-  // #endif
+void RTCErrors(int e);
 
+void setup() {
   Serial.begin(9600);
 
   if (!rtc.begin()) {
-    Serial.println("Couldn't find RTC");
-    Serial.flush();
+    RTCErrors(0); // "Couldn't find RTC"
+    Serial.flush(); // Not sure if can use?
     while (1) delay(10);  // Infinite loop if RTC not found
   }
 
   if (!rtc.isrunning()) {
-    Serial.println("RTC is NOT running, setting the time");
+    RTCErrors(1); // "RTC is NOT running, setting the time"
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));  // Set RTC to compile time
   }
 
-  // Initialize stepper motor
-  // stepper.setSpeed(rpm);
-
   // Initialize LCD
   lcd.begin(16, 2);
-  lcd.clear();
-  lcd.print("test");
 
-
-  // TESTING
+  // Initialize temperature and humidity sensor
   dht.begin();
 
   // Initialize timers
@@ -128,7 +120,7 @@ void setup() {
   *timerControlRegB = B00000000;
   *timerControlRegA = B00000000;
 
-  // Initialize ADC and UART
+  // Initialize ADC and UART (for water sensor)
   U0init(9600);
   adc_init();
 
@@ -144,7 +136,12 @@ void loop() {
   // Check and handle system states based on sensor inputs and toggle switch
 
   //TESTING
-  VentControl();
+  // VentControl();
+  // int testWater = WaterSensor();
+  // Serial.println(testWater);
+  ClockModule();
+  // delay(3000);
+  MyDelay(2);
 
   // Disabled state: system off
   if (*portKInput == B00000001) {
@@ -243,11 +240,10 @@ void ErrorState() {
 // DHT Sensor Function
 // Reads and returns temperature from the DHT sensor, and updates the LCD.
 double DHTSensor() {
-  // float humidity = dht.readHumidity();  // Read humidity
   float humidity = dht.readHumidity();
-  float temperatureF = dht.readTemperature(true);
+  float temperatureF = dht.readTemperature(true); // true sets temperature to F
 
-  //TESTING
+  // TESTING
   Serial.println("TEMPERATURE");
   Serial.println(temperatureF);
   Serial.println("HUMIDITY");
@@ -309,20 +305,56 @@ void VentControl() {
 void ClockModule() {
   DateTime now = rtc.now();
 
-  Serial.print(now.year(), DEC);
-  Serial.print('/');
-  Serial.print(now.month(), DEC);
-  Serial.print('/');
-  Serial.print(now.day(), DEC);
-  Serial.print(" (");
-  Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
-  Serial.print(") ");
-  Serial.print(now.hour(), DEC);
-  Serial.print(':');
-  Serial.print(now.minute(), DEC);
-  Serial.print(':');
-  Serial.print(now.second(), DEC);
-  Serial.println();
+  int year = now.year();
+  int month = now.month();
+  int day = now.day();
+  int hour = now.hour();
+  int minute = now.minute();
+  int second = now.second();
+  char time[29] = {
+    't','i','m','e',':',' ',
+    hour / 10 + '0',
+    hour % 10 + '0',
+    ':',
+    minute / 10 + '0',
+    minute % 10 + '0',
+    ':',
+    second / 10 + '0',
+    second % 10 + '0',
+    ' ',
+    'o',
+    'n',
+    ' ',
+    month / 10 + '0',
+    month % 10 + '0',
+    '/',
+    day / 10 + '0',
+    day % 10 + '0',
+    '/',
+    (year / 1000) + '0',
+    (year % 1000 / 100) + '0',
+    (year % 100 / 10) + '0',
+    (year % 10) + '0', ' '
+  };
+  for (int i = 0; i < 29; i++){
+    U0putchar(time[i]);
+  }
+  U0putchar('\n');
+
+  // Serial.print(now.year(), DEC);
+  // Serial.print('/');
+  // Serial.print(now.month(), DEC);
+  // Serial.print('/');
+  // Serial.print(now.day(), DEC);
+  // Serial.print(" (");
+  // Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
+  // Serial.print(") ");
+  // Serial.print(now.hour(), DEC);
+  // Serial.print(':');
+  // Serial.print(now.minute(), DEC);
+  // Serial.print(':');
+  // Serial.print(now.second(), DEC);
+  // Serial.println();
 }
 
 
@@ -338,40 +370,158 @@ void TimerDelay(unsigned int ticks) {
   *timerInterruptFlagReg1 |= 0x01;  // Clear timer interrupt flag
 }
 
+void MyDelay(unsigned int freq){
+  double period = 1.0/double(freq); // calc period
+  double half_period = period/ 2.0f; // 50% duty cycle
+  double clk_period = 0.0000000625; // clock period def
+  unsigned int ticks = (half_period / clk_period); // calc ticks
+
+  *timerControlRegB &= 0xF8; // stop the timer
+  *timerCounter1 = (unsigned int) (65536 - ticks); // set the counts
+  // *timerControlRegA = 0; 
+  *timerControlRegB |= 0x01; // start the timer
+
+  while((*timerInterruptFlagReg1 & 0x01)==0); // wait for overflow
+  *timerControlRegB &= 0xF8; // stop the timer    
+  *timerInterruptFlagReg1 |= 0x01; // reset TOV
+}
+
 // Water Sensor Function
 // Reads and returns the water level from the ADC.
 int WaterSensor() {
   adc_init();  // Initialize ADC
-  int waterLevel = adc_read(0x00);  // Read water level from ADC channel 0
+  int waterLevel = adc_read(0);  // Read water level from ADC channel 0
   return waterLevel;  // Return the water level reading
 }
 
+// Water sensor functions
 // ADC Initialization Function
 // Sets up the ADC for reading.
 void adc_init() {
-  *adcMux |= 0b11000000;  // Set ADC multiplexer settings
-  *adcControlStatusA |= 0b10100000;  // Set ADC control and status register A
-  *adcControlStatusB |= 0b01000000;  // Set ADC control and status register B
-  *adcData |= 0x00;  // Clear ADC data register
+  // setup the A register
+  // set bit   7 to 1 to enable the ADC
+  *my_ADCSRA |= 0b10000000;
+  // clear bit 6 to 0 to disable the ADC trigger mode
+  *my_ADCSRA &= 0b10111111;
+  // clear bit 5 to 0 to disable the ADC interrupt
+  *my_ADCSRA &= 0b11011111;
+  // clear bit 0-2 to 0 to set prescaler selection to slow reading
+  *my_ADCSRA &= 0b11111000;
+  // setup the B register
+  // clear bit 3 to 0 to reset the channel and gain bits
+  *my_ADCSRB &= 0b11110111;
+  // clear bit 2-0 to 0 to set free running mode
+  *my_ADCSRB &= 0b11111000;
+  // setup the MUX Register
+  // clear bit 7 to 0 for AVCC analog reference
+  *my_ADMUX &= 0b01111111;
+  // set bit 6 to 1 for AVCC analog reference
+  *my_ADMUX |= 0b01000000;
+  // clear bit 5 to 0 for right adjust result
+  *my_ADMUX &= 0b11011111;
+  // clear bit 4-0 to 0 to reset the channel and gain bits
+  *my_ADMUX &= 0b11100000;
 }
 
 // ADC Read Function
 // Performs an ADC read on the specified channel.
-unsigned int adc_read(unsigned char adc_channel) {
-  *adcControlStatusB |= adc_channel;  // Set channel to read from
-  *adcControlStatusA |= 0x40;  // Start the ADC conversion
-  while (!(*adcControlStatusA & 0x40));  // Wait for conversion to complete
-  return *adcData;  // Return the ADC data
+unsigned int adc_read(unsigned char adc_channel_num) {
+  // clear the channel selection bits (MUX 4:0)
+  *my_ADMUX &= 0b11100000;
+  // clear the channel selection bits (MUX 5) hint: it's not in the ADMUX register
+  *my_ADCSRB &= 0b11110111;
+  // set the channel selection bits for channel 0
+  *my_ADMUX += adc_channel_num;
+  // set bit 6 of ADCSRA to 1 to start a conversion
+  *my_ADCSRA |= 0b01000000;
+  // wait for the conversion to complete
+  while((*my_ADCSRA & 0x40) != 0);
+  // return the result in the ADC data register and format the data based on right justification (check the lecture slide)
+  unsigned int val = (*my_ADC_DATA & 0x03FF);
+  return val;
 }
 
 // UART Initialization Function
 // Initializes the UART (Universal Asynchronous Receiver-Transmitter) for serial communication.
-void U0init(unsigned long baudRate) {
-  unsigned long fCPU = 16000000;  // CPU clock frequency
-  unsigned int tBaud = (fCPU / 16 / baudRate - 1);  // Calculate baud rate
-  *serialControlRegA = 0x20;  // Set control register A
-  *serialControlRegB = 0x18;  // Set control register B
-  *serialControlRegC = 0x06;  // Set control register C
-  *baudRateReg = tBaud;  // Set baud rate register
+void U0init(int U0baud) {
+ unsigned long FCPU = 16000000;
+ unsigned int tbaud;
+ tbaud = (FCPU / 16 / U0baud - 1);
+ // Same as (FCPU / (16 * U0baud)) - 1;
+ *myUCSR0A = 0x20;
+ *myUCSR0B = 0x18;
+ *myUCSR0C = 0x06;
+ *myUBRR0  = tbaud;
 }
 
+// maybe not needed since using serial to print
+// unsigned char U0kbhit(){
+//   return *myUCSR0A & RDA;
+// }
+// unsigned char U0getchar(){
+//   return *myUDR0;
+// }
+void U0putchar(unsigned char U0pdata){
+  while((*myUCSR0A & TBE)==0);
+  *myUDR0 = U0pdata;
+}
+
+void RTCErrors(int e){
+  if(e == 0){ // "Couldn't find RTC"
+    U0putchar('C');
+    U0putchar('o');
+    U0putchar('u');
+    U0putchar('l');
+    U0putchar('d');
+    U0putchar('n');
+    U0putchar('\'');
+    U0putchar('t');
+    U0putchar(' ');
+    U0putchar('f');
+    U0putchar('i');
+    U0putchar('n');
+    U0putchar('d');
+    U0putchar(' ');
+    U0putchar('R');
+    U0putchar('T');
+    U0putchar('C');        
+  }
+  if(e == 1){ // "RTC is NOT running, setting the time"
+    U0putchar('R');
+    U0putchar('T');
+    U0putchar('C');
+    U0putchar(' ');
+    U0putchar('i');
+    U0putchar('s');
+    U0putchar(' ');
+    U0putchar('N');
+    U0putchar('O');
+    U0putchar('T');
+    U0putchar(' ');
+    U0putchar('r');
+    U0putchar('u');
+    U0putchar('n');
+    U0putchar('n');
+    U0putchar('i');
+    U0putchar('n');
+    U0putchar('g');
+    U0putchar(',');
+    U0putchar(' ');
+    U0putchar('s');
+    U0putchar('e');
+    U0putchar('t');
+    U0putchar('t');
+    U0putchar('i');
+    U0putchar('n');
+    U0putchar('g');
+    U0putchar(' ');
+    U0putchar('t');
+    U0putchar('h');
+    U0putchar('e');
+    U0putchar(' ');
+    U0putchar('t');
+    U0putchar('i');
+    U0putchar('m');
+    U0putchar('e');
+  }
+}
