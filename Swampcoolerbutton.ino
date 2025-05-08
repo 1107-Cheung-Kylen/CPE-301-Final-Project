@@ -1,8 +1,8 @@
 #include <LiquidCrystal.h> 
-#include "DHT.h" // DHT Sensor Library by Adafruit
+#include "DHT.h" // "DHT Sensor Library" by Adafruit
 #include <Stepper.h>
 #include <Wire.h>
-#include "RTClib.h" // RTClib by Adafruit
+#include "RTClib.h" // "RTClib" by Adafruit
 
 // Environmental threshold variables
 float tempThreshold = 78;  // Temperature threshold
@@ -100,6 +100,7 @@ void RTCErrors(int e);
 void setup() {
   Serial.begin(9600);
 
+  // Initialize RTC clock
   if (!rtc.begin()) {
     RTCErrors(0); // "Couldn't find RTC"
     Serial.flush(); // Not sure if can use?
@@ -139,11 +140,11 @@ void setup() {
   pinMode(53, OUTPUT); // GREEN
   pinMode(51, OUTPUT); // YELLOW
 
-  // Initalize fan control pins
+  // Initalize fan pins
   pinMode(enA, OUTPUT);
   pinMode(in1, OUTPUT);
   pinMode(in2, OUTPUT);
-  // Initalize fan motors off (initial state)
+  // Start with fan off
   digitalWrite(in1, LOW);
   digitalWrite(in2, LOW);
 }
@@ -152,19 +153,15 @@ void loop() {
   // Main program loop
   // Check and handle system states based on sensor inputs and toggle switch
 
-  //TESTING
+  // TESTING SPECIFIC FUNCTIONS
   // VentControl();
-  // int testWater = WaterSensor();
-  // Serial.println(testWater);
-  ClockModule();
+  // ClockModule();
   // delay(3000);
   // MyDelay(2);
-    // TESTING
-    // FanON(true);
-  // ErrorState();  
-  DisabledState();
 
-  // Fan control loops
+  // TESTING SPECIFIC STATES
+  ErrorState(); // easiest to test first
+  // DisabledState();
 
   // Disabled state: system off
   if (*portKInput == B00000001) {
@@ -189,6 +186,7 @@ void loop() {
 
 // Disabled State Function
 // This state represents the system being turned off or disabled.
+// Yellow LED on, water and humidity are not monitored, system can be start using button
 void DisabledState() {
   if (toggle != 1) {
     toggle = 1;
@@ -212,8 +210,12 @@ void DisabledState() {
   FanON(false);
 }
 
+// All other states
+// System updates humidity and temperature on LCD once a minute. Stop button will turn off fan (if on) and set system to disabled state. Vent is controlled through buttons
+
 // Idle State Function
 // This state is active when the system is on but idle due to no need for intervention.
+// Green LED on, water level is monitored and transitions to error state if too low, time is displayed on LCD
 void IdleState() {
   if (toggle != 2) {
     toggle = 2;
@@ -239,6 +241,7 @@ void IdleState() {
 
 // Running State Function
 // This state is active when the system needs to run due to environmental conditions.
+// Blue LED on, temperature is monitored and transitions to idle if temperature is too low, water level is monitored and transitions to error if water too low
 void RunningState() {
   if (toggle != 3) {
     toggle = 3;
@@ -264,6 +267,7 @@ void RunningState() {
 
 // Error State Function
 // This state is triggered when there is an error, such as low water level.
+// Red LED on, motor is turned off, error message is displayed, if water is above threshold when reset button is pressed then transition to idle state
 void ErrorState() {
   if (toggle != 4) {
     toggle = 4;
