@@ -6,7 +6,7 @@
 
 // Environmental threshold variables
 float tempThreshold = 78;  // Temperature threshold
-float waterThreshold = 500; // Water level threshold
+float waterThreshold = 50; // Water level threshold
 
 // Stepper motor configuration
 const int stepsPerRevolution = 2048;  // Number of steps for a full revolution
@@ -53,11 +53,6 @@ volatile unsigned int* my_ADC_DATA = (unsigned int*) 0x78; //adcData
 // long value = 0UL;
 // long maxtime = 160000000UL;
 
-// Port K registers (Analog I/O pins)
-volatile unsigned char* portKInput = (unsigned char*) 0x106;
-volatile unsigned char* portKDirection = (unsigned char*) 0x107;
-volatile unsigned char* portKData = (unsigned char*) 0x108;
-
 // Timer configuration (used in MyDelay function)
 volatile unsigned char* timerControlRegA = (unsigned char*) 0x80; // TCCR1A
 volatile unsigned char* timerControlRegB = (unsigned char*) 0x81; // TCCR1B
@@ -66,12 +61,21 @@ volatile unsigned char* timerInterruptFlagReg1 = (unsigned char*) 0x36; // TIFR1
 // int oneSecondTicks = 62500;  // Ticks value for 1 second delay with timer
 // int freq = 0;
 
-// Port B registers (Digital I/O pins)
+// Port B registers (Digital I/O pins) (used for LEDs)
 volatile unsigned char* portBData = (unsigned char*) 0x25; // Port B data register
 volatile unsigned char* portBDirection = (unsigned char*) 0x24;  // Port B Data Direction Register
 volatile unsigned char* portBInput = (unsigned char*) 0x23;  // Port B Input Pin Address
 
+// Used to save which state program is in?
 int toggle = 0;
+int currentState = 0;
+
+// Reset button - A15 (PK7)
+// Opens analog for ports Port K0-7
+volatile unsigned char* port_k = (unsigned char*) 0x108; 
+volatile unsigned char* ddr_k  = (unsigned char*) 0x107; 
+volatile unsigned char* pin_k  = (unsigned char*) 0x106; 
+bool reset = false;
 
 // Function declarations
 void adc_init(); // used for water sensor
@@ -81,14 +85,15 @@ void TimerDelay(unsigned int ticks); // UNKNOWN?
 void U0putchar(unsigned char U0pdata); // replaces serial, only one char at a time
 // void U0init(unsigned long U0baud);
 int WaterSensor();
-void ClockModule(); 
-void FanControl();
-void VentControl();
-void LCDError();
-void LCDData(float h, float f);
-double DHTSensor();
-void ErrorState();
-void RunningState();
+void ClockModule(); // Displays the current date and time on the serial monitor.
+void FanControl(); 
+void VentControl(); 
+void LCDError(); // Prints error message to display
+void LCDData(float h, float f); // Prints humidity and temperature to display
+double DHTSensor(); // Read humidity and temperature, prints to display
+// Different states for system
+void ErrorState(); 
+void RunningState(); 
 void IdleState();
 void DisabledState();
 // void directionControl();
@@ -129,10 +134,10 @@ void setup() {
   adc_init();
 
   // Initialize digital output pins
-  *portBDirection = B10001111;
+  // *portBDirection = B10001111; // stops LCD from working
 
   // Initialize analog input pins
-  *portKDirection = B01111111;
+  // *portKDirection = B01111111;
 
   // Initialize LED pins
   pinMode(52, OUTPUT); // RED
@@ -147,6 +152,9 @@ void setup() {
   // Start with fan off
   digitalWrite(in1, LOW);
   digitalWrite(in2, LOW);
+
+  // Initialize Reset Button
+  *ddr_k &= 0b10000000; // since using PK7, create mask value to get PK7
 }
 
 void loop() {
@@ -155,32 +163,51 @@ void loop() {
 
   // TESTING SPECIFIC FUNCTIONS
   // VentControl();
-  // ClockModule();
   // delay(3000);
   // MyDelay(2);
 
   // TESTING SPECIFIC STATES
-  ErrorState(); // easiest to test first
-  // DisabledState();
 
-  // Disabled state: system off
-  if (*portKInput == B00000001) {
-    // DisabledState();
+
+  // Check reset button
+  // if(*pin_k & 0b10000000){ // Reset button has been pressed
+  //   reset = true;
+  //   Serial.print("button pressed!");
+  // }else{
+  //   reset = false;
+  // }
+  // Serial.println(reset);
+  delay(300);
+
+  // 0 = initial, 1 = disabled, 2 = idle, 3 = running, 4 = error
+  // Initial, set it to disabled state
+  if(toggle == 0){ // sets to disabled state when first powered on
+    DisabledState();
   }
-
-  // Idle state: system on, but idle
-  if (*portKInput == B00000000 && (WaterSensor() > waterThreshold) && (DHTSensor() < tempThreshold)) {
-    // IdleState();
+  // In disabled state
+  if((toggle == 0 || toggle == 1) && (*pin_k & 0b10000000)){ // when disabled and button is pressed, set to running state
+    IdleState();
   }
-
-  // Running state: active ventilation based on temperature and water level
-  if (*portKInput == B00000000 && (WaterSensor() > waterThreshold) && (DHTSensor() > tempThreshold)) {
-    // RunningState();
+  // In idle state
+  if(toggle == 2 && WaterSensor() < waterThreshold){ // when idle and water below threshold, set to error state
+    ErrorState();
   }
-
-  // Error state: water level below threshold
-  if (*portKInput == B00000000 && (WaterSensor() < waterThreshold)) {
-    // ErrorState(); // disabled for TESTING
+  if(toggle == 2 && (*pin_k & 0b10000000)){
+    DisabledState(); // somehow returns to disabled state
+  }
+  // In running state
+  if(toggle == 3 && DHTSensor() < tempThreshold){
+    IdleState();
+  }
+  if(toggle == 3 && WaterSensor() < waterThreshold){ // when running an dwater above threshold, set to idle state
+    ErrorState();
+  }
+  if(toggle == 3 && (*pin_k & 0b10000000)){
+    DisabledState();
+  }
+  // In error state
+  if(toggle == 4 && (*pin_k & 0b10000000) && WaterSensor() > waterThreshold){
+    IdleState();
   }
 }
 
@@ -196,6 +223,9 @@ void DisabledState() {
     *portBData &= B11111110;
     *portBData &= B11111011;
     *portBData &= B11110111;
+
+    Serial.println("Disabled State");
+    ClockModule();
   }
 
   PORTB &= ~(1 << 1); // Clear bit (RED)
@@ -203,8 +233,8 @@ void DisabledState() {
   PORTB &= ~(1 << 0); // Clear bit ((GREEN))
   PORTB |= (1 << 2); // Set bit 2 to HIGH (YELLOW)
 
-  Serial.println("DISABLED State");
-  ClockModule();  // Display clock information
+  // Serial.println("DISABLED State");
+  // ClockModule();  // Display clock information
   lcd.setCursor(0, 0);
   lcd.print("System Off");
   FanON(false);
@@ -225,16 +255,21 @@ void IdleState() {
     *portBData &= B11111101;
     *portBData &= B11111011;
     *portBData &= B11110111;
+
+    Serial.println("Idle State");
+    ClockModule();
   }
 
   PORTB &= ~(1 << 1); // Clear bit (RED)
   PORTB &= ~(1 << 2); // Clear bit (YELLOW)
-  PORTB &= ~(1 << 0); // Clear bit ((GREEN))
-  PORTB |= (1 << 3); // Set Blue HIGH (BLUE)
+  PORTB &= ~(1 << 3); // Clear bit (BLUE)
+  PORTB |= (1 << 0); // Set Green HIGH (GREEN)
 
-  Serial.println("IDLE State");
-  ClockModule();
-  DHTSensor();  // Read humidity and temperature
+
+
+  // Serial.println("IDLE State");
+  // ClockModule();
+  DHTSensor();  // Read humidity and temperature, prints to display
   VentControl();  // Control ventilation based on environmental data
   FanON(false);
 }
@@ -245,18 +280,21 @@ void IdleState() {
 void RunningState() {
   if (toggle != 3) {
     toggle = 3;
-    lcd.clear();
+    // lcd.clear();
     *portBData |= B00001000;
     *portBData &= B11111101;
     *portBData &= B11111011;
     *portBData &= B11111110;
     *portBData |= B10000000;  // Turn on the fan
+
+    Serial.println("Running State");
+    ClockModule();
   }
 
   PORTB &= ~(1 << 1); // Clear bit (RED)
-  PORTB &= ~(1 << 3); // Clear bit (BLUE)
   PORTB &= ~(1 << 2); // Clear bit (YELLOW)
-  PORTB |= (1 << 0); // Set Green HIGH ((GREEN))
+  PORTB &= ~(1 << 0); // Clear bit (GREEN)
+  PORTB |= (1 << 3); // Set Blue HIGH (BLUE)
 
   DHTSensor();
   FanON(true);
@@ -277,6 +315,9 @@ void ErrorState() {
     *portBData &= B11110111;
     *portBData &= B11111101;
     *portBData &= B11111110;
+
+    Serial.println("Error State");
+    ClockModule();
   }
 
   PORTB &= ~(1 << 2); // Clear bit (YELLOW)
@@ -285,8 +326,6 @@ void ErrorState() {
   PORTB |= (1 << 1); // Set bit HIGH (RED)
 
   VentControl();
-  Serial.println("ERROR State");
-  ClockModule();
   LCDError();  // Display error message on LCD
   FanON(false);
 }
@@ -296,12 +335,6 @@ void ErrorState() {
 double DHTSensor() {
   float humidity = dht.readHumidity();
   float temperatureF = dht.readTemperature(true); // true sets temperature to F
-
-  // TESTING
-  Serial.println("TEMPERATURE");
-  Serial.println(temperatureF);
-  Serial.println("HUMIDITY");
-  Serial.println(humidity);
 
   // Check for failed reading from sensor
   if (isnan(humidity) || isnan(temperatureF)) {
@@ -330,7 +363,7 @@ void LCDData(float humidity, float temperatureF) {
 // LCD Error Display Function
 // Displays an error message on the LCD, typically for low water level.
 void LCDError() {
-  lcd.setCursor(0, 1);
+  lcd.setCursor(0, 0);
   lcd.print("ERROR: LOW WATER");
 }
 
@@ -523,16 +556,14 @@ void U0putchar(unsigned char U0pdata){
 void FanON(bool on){
   // default state off
   analogWrite(enA, 255);
-	digitalWrite(in1, HIGH);
-	digitalWrite(in2, LOW);  
-  // if(on == true){
-  //   digitalWrite(in1, HIGH);
-  //   digitalWrite(in2, LOW);
-  // }
-  // if(on == false){
-  //   digitalWrite(in1, LOW);
-  //   digitalWrite(in2, LOW);
-  // }
+  if(on == true){
+    digitalWrite(in1, HIGH);
+    digitalWrite(in2, LOW);
+  }
+  if(on == false){
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, LOW);
+  }
 }
 
 void RTCErrors(int e){
