@@ -3,10 +3,11 @@
 #include <Stepper.h>
 #include <Wire.h>
 #include "RTClib.h" // "RTClib" by Adafruit
+// May need "Adafruit BusIO" as additional dependency
 
 // Environmental threshold variables
 float tempThreshold = 78;  // Temperature threshold
-float waterThreshold = 50; // Water level threshold
+float waterThreshold = 500; // Water level threshold
 
 // Stepper motor configuration
 const int stepsPerRevolution = 2048;  // Number of steps for a full revolution
@@ -68,14 +69,17 @@ volatile unsigned char* portBInput = (unsigned char*) 0x23;  // Port B Input Pin
 
 // Used to save which state program is in?
 int toggle = 0;
+int state = 0;
 int currentState = 0;
 
-// Reset button - A15 (PK7)
+// Reset button (bottom) - A15 (PK7), Clockwise Vent (middle) - A14 (PK6), Counterclockwise Vent (top) - A13 (PK5)
 // Opens analog for ports Port K0-7
 volatile unsigned char* port_k = (unsigned char*) 0x108; 
 volatile unsigned char* ddr_k  = (unsigned char*) 0x107; 
 volatile unsigned char* pin_k  = (unsigned char*) 0x106; 
 bool reset = false;
+
+unsigned long previousMillis = 0;
 
 // Function declarations
 void adc_init(); // used for water sensor
@@ -96,9 +100,7 @@ void ErrorState();
 void RunningState(); 
 void IdleState();
 void DisabledState();
-// void directionControl();
 void FanON(bool on);
-// void FanOFF();
 
 void RTCErrors(int e);
 
@@ -155,59 +157,73 @@ void setup() {
 
   // Initialize Reset Button
   *ddr_k &= 0b10000000; // since using PK7, create mask value to get PK7
+  *ddr_k &= 0b01000000; // Clockwise vent control button
+  *ddr_k &= 0b00100000; // Counterclockwise vent control button
+
 }
 
 void loop() {
   // Main program loop
   // Check and handle system states based on sensor inputs and toggle switch
 
-  // TESTING SPECIFIC FUNCTIONS
-  // VentControl();
-  // delay(3000);
-  // MyDelay(2);
+  DelayFunction(300);
 
-  // TESTING SPECIFIC STATES
-
-
-  // Check reset button
-  // if(*pin_k & 0b10000000){ // Reset button has been pressed
-  //   reset = true;
-  //   Serial.print("button pressed!");
-  // }else{
-  //   reset = false;
-  // }
-  // Serial.println(reset);
-  delay(300);
-
+  // Change states based off buttons or environmental conditions
   // 0 = initial, 1 = disabled, 2 = idle, 3 = running, 4 = error
   // Initial, set it to disabled state
   if(toggle == 0){ // sets to disabled state when first powered on
+    lcd.clear();
     DisabledState();
   }
   // In disabled state
   if((toggle == 0 || toggle == 1) && (*pin_k & 0b10000000)){ // when disabled and button is pressed, set to running state
+    lcd.clear();
     IdleState();
   }
   // In idle state
-  if(toggle == 2 && WaterSensor() < waterThreshold){ // when idle and water below threshold, set to error state
+  if(toggle == 2 && WaterSensor() <= waterThreshold){ // when idle and water below threshold, set to error state
+    lcd.clear();
     ErrorState();
   }
+  if(toggle == 2 && DHTSensor() > tempThreshold){
+    lcd.clear();
+    RunningState();
+  }
   if(toggle == 2 && (*pin_k & 0b10000000)){
+    lcd.clear();
     DisabledState(); // somehow returns to disabled state
   }
   // In running state
-  if(toggle == 3 && DHTSensor() < tempThreshold){
+  if(toggle == 3 && DHTSensor() <= tempThreshold){
+    lcd.clear();
     IdleState();
   }
   if(toggle == 3 && WaterSensor() < waterThreshold){ // when running an dwater above threshold, set to idle state
+    lcd.clear();
     ErrorState();
   }
   if(toggle == 3 && (*pin_k & 0b10000000)){
+    lcd.clear();
     DisabledState();
   }
   // In error state
   if(toggle == 4 && (*pin_k & 0b10000000) && WaterSensor() > waterThreshold){
+    lcd.clear();
     IdleState();
+  }
+
+  // Loop states otherwise
+  if(toggle == 1){
+    DisabledState();
+  }
+  if(toggle == 2){
+    IdleState();
+  }
+  if(toggle == 3){
+    RunningState();
+  }
+  if(toggle == 4){
+    ErrorState();
   }
 }
 
@@ -217,14 +233,14 @@ void loop() {
 void DisabledState() {
   if (toggle != 1) {
     toggle = 1;
-    lcd.clear();
+    // lcd.clear();
     *portBData &= B01111111;
     *portBData |= B00000010;
     *portBData &= B11111110;
     *portBData &= B11111011;
     *portBData &= B11110111;
 
-    Serial.println("Disabled State");
+    SerialStates(1);
     ClockModule();
   }
 
@@ -233,8 +249,6 @@ void DisabledState() {
   PORTB &= ~(1 << 0); // Clear bit ((GREEN))
   PORTB |= (1 << 2); // Set bit 2 to HIGH (YELLOW)
 
-  // Serial.println("DISABLED State");
-  // ClockModule();  // Display clock information
   lcd.setCursor(0, 0);
   lcd.print("System Off");
   FanON(false);
@@ -249,14 +263,14 @@ void DisabledState() {
 void IdleState() {
   if (toggle != 2) {
     toggle = 2;
-    lcd.clear();
+    // lcd.clear();
     *portBData &= B01111111;
     *portBData |= B00000001;
     *portBData &= B11111101;
     *portBData &= B11111011;
     *portBData &= B11110111;
 
-    Serial.println("Idle State");
+    SerialStates(2);
     ClockModule();
   }
 
@@ -265,10 +279,6 @@ void IdleState() {
   PORTB &= ~(1 << 3); // Clear bit (BLUE)
   PORTB |= (1 << 0); // Set Green HIGH (GREEN)
 
-
-
-  // Serial.println("IDLE State");
-  // ClockModule();
   DHTSensor();  // Read humidity and temperature, prints to display
   VentControl();  // Control ventilation based on environmental data
   FanON(false);
@@ -280,14 +290,14 @@ void IdleState() {
 void RunningState() {
   if (toggle != 3) {
     toggle = 3;
-    // lcd.clear();
+    lcd.clear();
     *portBData |= B00001000;
     *portBData &= B11111101;
     *portBData &= B11111011;
     *portBData &= B11111110;
     *portBData |= B10000000;  // Turn on the fan
 
-    Serial.println("Running State");
+    SerialStates(3);
     ClockModule();
   }
 
@@ -299,8 +309,6 @@ void RunningState() {
   DHTSensor();
   FanON(true);
   VentControl();
-  Serial.println("RUNNING State");
-  ClockModule();
 }
 
 // Error State Function
@@ -309,14 +317,14 @@ void RunningState() {
 void ErrorState() {
   if (toggle != 4) {
     toggle = 4;
-    lcd.clear();
+    // lcd.clear();
     *portBData &= B01111111;
     *portBData |= B00000100;
     *portBData &= B11110111;
     *portBData &= B11111101;
     *portBData &= B11111110;
 
-    Serial.println("Error State");
+    SerialStates(4);
     ClockModule();
   }
 
@@ -370,21 +378,15 @@ void LCDError() {
 // Ventilation Control Function
 // Controls the stepper motor for ventilation based on sensor inputs.
 void VentControl() {
-  // int steps = stepsPerRevolution / 360;  // Calculate steps for partial revolution
-
-  // while (*portKInput == B00000010) {  // Analog pin 9
-  //   stepper.step(steps);  // Rotate stepper motor
-  //   Serial.println("Rotating Left");
-  // }
-
-  // while (*portKInput == B00000100) {  // Analog pin 10
-  //   stepper.step(-steps);  // Rotate stepper motor in opposite direction
-  //   Serial.println("Rotating Right");
-  // }
-
+  int steps = stepsPerRevolution / 30;  // Calculate steps for partial revolution
   stepper.setSpeed(5);
-  stepper.step(stepsPerRevolution);
-  delay(1000);
+  if(*pin_k & 0b01000000){
+    stepper.step(steps);
+  }
+  if(*pin_k & 0b00100000){ // Counterclockwise vent control button)
+    stepper.step(-steps);
+  }
+  DelayFunction(300);
 }
 
 // Clock Module Function
@@ -398,8 +400,10 @@ void ClockModule() {
   int hour = now.hour();
   int minute = now.minute();
   int second = now.second();
-  char time[29] = {
-    't','i','m','e',':',' ',
+  char time[26] = {
+    'a',
+    't',
+    ' ',
     hour / 10 + '0',
     hour % 10 + '0',
     ':',
@@ -423,27 +427,11 @@ void ClockModule() {
     (year % 100 / 10) + '0',
     (year % 10) + '0', ' '
   };
-  for (int i = 0; i < 29; i++){
+  for (int i = 0; i < 26; i++){
     U0putchar(time[i]);
   }
   U0putchar('\n');
-
-  // Serial.print(now.year(), DEC);
-  // Serial.print('/');
-  // Serial.print(now.month(), DEC);
-  // Serial.print('/');
-  // Serial.print(now.day(), DEC);
-  // Serial.print(" (");
-  // Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
-  // Serial.print(") ");
-  // Serial.print(now.hour(), DEC);
-  // Serial.print(':');
-  // Serial.print(now.minute(), DEC);
-  // Serial.print(':');
-  // Serial.print(now.second(), DEC);
-  // Serial.println();
 }
-
 
 // Timer Delay Function
 // Creates a delay based on timer ticks.
@@ -457,20 +445,45 @@ void TimerDelay(unsigned int ticks) {
   *timerInterruptFlagReg1 |= 0x01;  // Clear timer interrupt flag
 }
 
+void DelayFunction(unsigned long delayTime) {
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= delayTime) {
+    previousMillis = currentMillis;
+  } else {
+    while(currentMillis - previousMillis < delayTime){
+        currentMillis = millis();
+    }
+    previousMillis = currentMillis;
+  }
+}
+
 void MyDelay(unsigned int freq){
   double period = 1.0/double(freq); // calc period
   double half_period = period/ 2.0f; // 50% duty cycle
   double clk_period = 0.0000000625; // clock period def
   unsigned int ticks = (half_period / clk_period); // calc ticks
 
-  *timerControlRegB &= 0xF8; // stop the timer
-  *timerCounter1 = (unsigned int) (65536 - ticks); // set the counts
-  // *timerControlRegA = 0; 
-  *timerControlRegB |= 0x01; // start the timer
+  // *timerControlRegB &= 0xF8; // stop the timer
+  // *timerCounter1 = (unsigned int) (65536 - ticks); // set the counts
+  // // *timerControlRegA = 0; 
+  // *timerControlRegB |= 0x01; // start the timer
 
-  while((*timerInterruptFlagReg1 & 0x01)==0); // wait for overflow
-  *timerControlRegB &= 0xF8; // stop the timer    
-  *timerInterruptFlagReg1 |= 0x01; // reset TOV
+  // while((*timerInterruptFlagReg1 & 0x01)==0); // wait for overflow
+  // *timerControlRegB &= 0xF8; // stop the timer    
+  // *timerInterruptFlagReg1 |= 0x01; // reset TOV
+
+  *timerControlRegB &= 0b11111000; // set prescalar to 000
+  // set the counts
+  *timerCounter1 = (unsigned int) (65536 - ticks); 
+
+  // start the timer
+  *timerControlRegB |= 0b00000001;
+  // wait for overflow
+  while((*timerInterruptFlagReg1 & 0b00000001)==0); 
+  // stop the timer
+  *timerControlRegB &= 0b11111000;   
+  // reset TOV
+  *timerInterruptFlagReg1 |= 0b00000001;
 }
 
 // Water Sensor Function
@@ -623,5 +636,32 @@ void RTCErrors(int e){
     U0putchar('i');
     U0putchar('m');
     U0putchar('e');
+  }
+}
+
+void SerialStates(int state){
+  if(state == 1){
+    char disabled[15] = {'D', 'i', 's', 'a', 'b', 'l', 'e', 'd', ' ', 'S', 't', 'a', 't', 'e', '\n'};
+    for(int i = 0; i < 15; i++){
+      U0putchar(disabled[i]);
+    }
+  }
+  if(state == 2){
+    char idle[11] = {'I', 'd', 'l', 'e', ' ', 'S', 't', 'a', 't', 'e', '\n'};
+    for(int i = 0; i < 11; i++){
+      U0putchar(idle[i]);
+    }
+  }
+  if(state == 3){
+    char running[14] = {'R', 'u', 'n', 'n', 'i', 'n', 'g', ' ', 'S', 't', 'a', 't', 'e', '\n'};
+    for(int i = 0; i < 14; i++){
+      U0putchar(running[i]);
+    }
+  }
+  if(state == 4){
+    char error[12] = {'E', 'r', 'r', 'o', 'r', ' ', 'S', 't', 'a', 't', 'e', '\n'};
+    for(int i = 0; i < 12; i++){
+      U0putchar(error[i]);
+    }
   }
 }
